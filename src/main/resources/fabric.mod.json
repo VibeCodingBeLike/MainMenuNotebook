@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "mainmenunotebook",
+  "version": "${version}",
+  "name": "Main Menu Notebook",
+  "description": "Write notes for yourself on the title screen",
+  "authors": [],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/mainmenunotebook/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-datagen": [
+      "kat.blasted.mainmenunotebook.client.MainmenunotebookDataGenerator"
+    ],
+    "client": [
+      "kat.blasted.mainmenunotebook.client.MainmenunotebookClient"
+    ],
+    "main": [
+      "kat.blasted.mainmenunotebook.Mainmenunotebook"
+    ]
+  },
+  "mixins": [
+    "mainmenunotebook.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
