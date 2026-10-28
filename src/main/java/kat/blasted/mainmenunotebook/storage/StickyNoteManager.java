@@ -62,7 +62,9 @@ public class StickyNoteManager {
             migrated = true;
         }
 
-        if (Files.exists(pathTarget)) {
+        boolean fileExisted = Files.exists(pathTarget);
+
+        if (fileExisted) {
             try (Reader reader = Files.newBufferedReader(pathTarget)) {
                 List<StickyNote> loadedNotes = GSON.fromJson(reader, NOTE_LIST_TYPE);
                 if (loadedNotes != null) {
@@ -80,8 +82,8 @@ public class StickyNoteManager {
             save(); // Save immediately to new scope file (e.g. main_menu_notes.json)
         }
 
-        // Default welcome note if no notes are stored yet
-        if (notes.isEmpty()) {
+        // Only generate default welcome note if the config file does not exist on disk
+        if (!fileExisted) {
             StickyNote welcome = new StickyNote(20, 20);
             welcome.setWidth(150);
             welcome.setHeight(130);

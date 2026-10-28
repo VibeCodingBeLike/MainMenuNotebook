@@ -3,7 +3,7 @@
   "id": "mainmenunotebook",
   "version": "${version}",
   "name": "Main Menu Notebook",
-  "description": "Write notes for yourself on the title screen",
+  "description": "Sticky notes for your Main Menu and Pause Menu!\n\nHow to Use:\n• Ctrl + Left-Click: Create a new note\n• Click note body: Type text directly in the note (game keybinds suppressed while typing)\n• Header: Drag to move note anywhere on screen\n• [+] Button: Stack notes with multiple tabs\n• Tab Numbers: Left-click to switch tabs, Right-click to close a tab\n• ● Button: Cycle color palette for the active tab\n• – Button: Fold / unfold note\n• ⇲ Handle: Drag bottom-right corner to resize\n• ✕ Button: Delete note\n\nNotes persist automatically per menu (main_menu_notes.json & pause_menu_notes.json). To regenerate default welcome notes, delete the respective config file.",
   "authors": [],
   "contact": {},
   "license": "MIT",
