@@ -1,6 +1,7 @@
 package kat.blasted.mainmenunotebook.client.gui;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import kat.blasted.mainmenunotebook.model.NoteTab;
 import kat.blasted.mainmenunotebook.model.StickyNote;
 import kat.blasted.mainmenunotebook.model.StickyNoteColor;
 import kat.blasted.mainmenunotebook.storage.StickyNoteManager;
@@ -18,6 +19,8 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
 @Environment(EnvType.CLIENT)
@@ -30,10 +33,17 @@ public class StickyNoteWidget extends AbstractWidget {
     public static final int MAX_HEIGHT = 280;
     public static final int BTN_SIZE = 12;
 
+    public record TabBounds(int index, int x, int y, int width, int height) {
+        public boolean contains(double mx, double my) {
+            return mx >= x && mx < x + width && my >= y && my < y + height;
+        }
+    }
+
     private final StickyNote note;
     private final Font font;
     private final int screenWidth;
     private final int screenHeight;
+    private final StickyNoteManager manager;
     private final Consumer<StickyNoteWidget> onRemove;
     private final Consumer<StickyNoteWidget> onBringToFront;
 
@@ -57,11 +67,28 @@ public class StickyNoteWidget extends AbstractWidget {
         Consumer<StickyNoteWidget> onRemove,
         Consumer<StickyNoteWidget> onBringToFront
     ) {
+        this(x, y, width, height, note, font, screenWidth, screenHeight, StickyNoteManager.getInstance(), onRemove, onBringToFront);
+    }
+
+    public StickyNoteWidget(
+        int x,
+        int y,
+        int width,
+        int height,
+        StickyNote note,
+        Font font,
+        int screenWidth,
+        int screenHeight,
+        StickyNoteManager manager,
+        Consumer<StickyNoteWidget> onRemove,
+        Consumer<StickyNoteWidget> onBringToFront
+    ) {
         super(x, y, width, height, Component.literal("Sticky Note"));
         this.note = note;
         this.font = font;
         this.screenWidth = screenWidth;
         this.screenHeight = screenHeight;
+        this.manager = manager != null ? manager : StickyNoteManager.getInstance();
         this.onRemove = onRemove;
         this.onBringToFront = onBringToFront;
 
@@ -70,7 +97,7 @@ public class StickyNoteWidget extends AbstractWidget {
 
     private void rebuildEditBox() {
         boolean wasFocused = this.editBox != null && this.editBox.isFocused();
-        String currentText = this.editBox != null ? this.editBox.getValue() : note.getText();
+        String currentText = note.getText();
 
         int boxX = getX() + PADDING;
         int boxY = getY() + HEADER_HEIGHT + PADDING;
@@ -96,12 +123,54 @@ public class StickyNoteWidget extends AbstractWidget {
         this.editBox.setValue(currentText);
         this.editBox.setValueListener(text -> {
             note.setText(text);
-            StickyNoteManager.getInstance().save();
+            manager.save();
         });
 
         if (wasFocused) {
             this.editBox.setFocused(true);
         }
+    }
+
+    public List<TabBounds> getTabBounds() {
+        List<TabBounds> bounds = new ArrayList<>();
+        int curX = getX() + 4;
+        int maxRight = getX() + getWidth() - 44; // Controls start at getX() + getWidth() - 42
+        List<NoteTab> tabs = note.getTabs();
+        int y = getY();
+
+        for (int i = 0; i < tabs.size(); i++) {
+            NoteTab tab = tabs.get(i);
+            int tabW = Math.max(16, font.width(tab.getTitle()) + 8);
+            if (curX + tabW > maxRight - 14) {
+                tabW = Math.max(12, maxRight - 14 - curX);
+            }
+            if (curX + tabW > maxRight) break;
+            bounds.add(new TabBounds(i, curX, y + 2, tabW, 14));
+            curX += tabW + 2;
+        }
+        return bounds;
+    }
+
+    public boolean isOverAddTab(double mx, double my) {
+        List<TabBounds> tabs = getTabBounds();
+        int plusX = getX() + 4;
+        if (!tabs.isEmpty()) {
+            TabBounds last = tabs.get(tabs.size() - 1);
+            plusX = last.x() + last.width() + 2;
+        }
+        int maxRight = getX() + getWidth() - 44;
+        if (plusX + 12 > maxRight) return false;
+        int y = getY() + 2;
+        return mx >= plusX && mx < plusX + 12 && my >= y && my < y + 12;
+    }
+
+    public int getAddTabX() {
+        List<TabBounds> tabs = getTabBounds();
+        if (!tabs.isEmpty()) {
+            TabBounds last = tabs.get(tabs.size() - 1);
+            return last.x() + last.width() + 2;
+        }
+        return getX() + 4;
     }
 
     // Button hitboxes: 12x12 each, 2px top margin, 2px right margin, 2px gap between buttons
@@ -152,7 +221,7 @@ public class StickyNoteWidget extends AbstractWidget {
         if (isOverClose(event.x(), event.y())) {
             AbstractWidget.playButtonClickSound(Minecraft.getInstance().getSoundManager());
             unfocusEditBox();
-            StickyNoteManager.getInstance().removeNote(note);
+            manager.removeNote(note);
             if (onRemove != null) {
                 onRemove.accept(this);
             }
@@ -163,7 +232,7 @@ public class StickyNoteWidget extends AbstractWidget {
         if (isOverMinimize(event.x(), event.y())) {
             AbstractWidget.playButtonClickSound(Minecraft.getInstance().getSoundManager());
             note.setMinimized(!note.isMinimized());
-            StickyNoteManager.getInstance().save();
+            manager.save();
             if (note.isMinimized()) {
                 unfocusEditBox();
             }
@@ -174,8 +243,52 @@ public class StickyNoteWidget extends AbstractWidget {
         if (isOverColor(event.x(), event.y())) {
             AbstractWidget.playButtonClickSound(Minecraft.getInstance().getSoundManager());
             note.cycleColor();
-            StickyNoteManager.getInstance().save();
+            manager.save();
             rebuildEditBox();
+            return true;
+        }
+
+        // Tabs handling
+        for (TabBounds tb : getTabBounds()) {
+            if (tb.contains(event.x(), event.y())) {
+                // Right click (1) or middle click (2) closes tab if there's more than 1 tab
+                if (event.button() == 1 || event.button() == 2) {
+                    if (note.getTabs().size() > 1) {
+                        AbstractWidget.playButtonClickSound(Minecraft.getInstance().getSoundManager());
+                        note.removeTab(tb.index());
+                        rebuildEditBox();
+                        manager.save();
+                        return true;
+                    }
+                } else if (event.button() == 0) {
+                    if (tb.index() != note.getActiveTabIndex()) {
+                        AbstractWidget.playButtonClickSound(Minecraft.getInstance().getSoundManager());
+                        if (editBox != null) {
+                            note.getActiveTab().setText(editBox.getValue());
+                        }
+                        note.setActiveTabIndex(tb.index());
+                        rebuildEditBox();
+                        manager.save();
+                    }
+                    return true;
+                }
+            }
+        }
+
+        // Add tab button [+]
+        if (isOverAddTab(event.x(), event.y()) && event.button() == 0) {
+            AbstractWidget.playButtonClickSound(Minecraft.getInstance().getSoundManager());
+            if (editBox != null) {
+                note.getActiveTab().setText(editBox.getValue());
+            }
+            note.addTab();
+            rebuildEditBox();
+            if (editBox != null) {
+                editBox.setFocused(true);
+                this.setFocused(true);
+                activeEditingWidget = this;
+            }
+            manager.save();
             return true;
         }
 
@@ -189,7 +302,7 @@ public class StickyNoteWidget extends AbstractWidget {
             return true;
         }
 
-        // Header dragging
+        // Header dragging (clicked in header outside buttons/tabs)
         if (event.y() < getY() + HEADER_HEIGHT && event.button() == 0) {
             if (activeEditingWidget == this) {
                 activeEditingWidget = null;
@@ -235,7 +348,7 @@ public class StickyNoteWidget extends AbstractWidget {
 
             note.setX(newX);
             note.setY(newY);
-            StickyNoteManager.getInstance().save();
+            manager.save();
             return true;
         }
 
@@ -254,7 +367,7 @@ public class StickyNoteWidget extends AbstractWidget {
 
             note.setWidth(newW);
             note.setHeight(newH);
-            StickyNoteManager.getInstance().save();
+            manager.save();
             return true;
         }
 
@@ -382,11 +495,65 @@ public class StickyNoteWidget extends AbstractWidget {
         graphics.fill(x, y, x + w, y + HEADER_HEIGHT, col.getHeader());
         graphics.fill(x, y + HEADER_HEIGHT - 1, x + w, y + HEADER_HEIGHT, col.getBorder());
 
-        // 5. Header title (clean text, no pin icon)
-        graphics.text(font, "Note", x + 6, y + 4, col.getTextColor(), false);
+        // 5. Tabs
+        List<TabBounds> tabBoundsList = getTabBounds();
+        for (TabBounds tb : tabBoundsList) {
+            NoteTab tab = note.getTabs().get(tb.index());
+            boolean isActive = (tb.index() == note.getActiveTabIndex());
+            boolean isHovered = tb.contains(mouseX, mouseY);
+            StickyNoteColor tabCol = StickyNoteColor.values()[Math.floorMod(tab.getColorIndex(), StickyNoteColor.values().length)];
 
-        // 6. Header buttons (Ordered left-to-right: Color [●], Minimize [-], Close [✕])
-        // Each button is exactly 12x12 at y + 2
+            int tx1 = tb.x();
+            int tx2 = tb.x() + tb.width();
+            int ty1 = isActive ? tb.y() : tb.y() + 2;
+            int ty2 = y + HEADER_HEIGHT;
+
+            int bgCol = isActive ? tabCol.getBackground() : tabCol.getHeader();
+            graphics.fill(tx1, ty1, tx2, ty2, bgCol);
+
+            // Tab borders
+            graphics.fill(tx1, ty1, tx1 + 1, ty2, tabCol.getBorder());
+            graphics.fill(tx1, ty1, tx2, ty1 + 1, tabCol.getBorder());
+            graphics.fill(tx2 - 1, ty1, tx2, ty2, tabCol.getBorder());
+
+            if (!isActive) {
+                graphics.fill(tx1, ty2 - 1, tx2, ty2, tabCol.getBorder());
+            } else {
+                // Erase header divider line underneath active tab so it blends with body
+                graphics.fill(tx1 + 1, ty2 - 1, tx2 - 1, ty2, tabCol.getBackground());
+            }
+
+            if (isHovered) {
+                graphics.fill(tx1, ty1, tx2, ty2, 0x22FFFFFF);
+            }
+
+            int strW = font.width(tab.getTitle());
+            int strX = tx1 + Math.max(1, (tb.width() - strW) / 2);
+            int strY = ty1 + (isActive ? 2 : 1);
+            graphics.text(font, tab.getTitle(), strX, strY, tabCol.getTextColor(), false);
+        }
+
+        // Add tab button [+]
+        int plusX = getAddTabX();
+        int maxRight = x + w - 44;
+        if (plusX + 12 <= maxRight) {
+            boolean plusHovered = isOverAddTab(mouseX, mouseY);
+            if (plusHovered) {
+                graphics.fill(plusX, y + 2, plusX + 12, y + 14, 0x33000000);
+            }
+            // Subtle border around [+]
+            graphics.fill(plusX, y + 2, plusX + 12, y + 3, col.getBorder());
+            graphics.fill(plusX, y + 13, plusX + 12, y + 14, col.getBorder());
+            graphics.fill(plusX, y + 2, plusX + 1, y + 14, col.getBorder());
+            graphics.fill(plusX + 11, y + 2, plusX + 12, y + 14, col.getBorder());
+
+            // Centered 6x6 plus sign (2px line thickness)
+            int plusCol = plusHovered ? 0xFF000000 : col.getTextColor();
+            graphics.fill(plusX + 3, y + 7, plusX + 9, y + 9, plusCol);
+            graphics.fill(plusX + 5, y + 5, plusX + 7, y + 11, plusCol);
+        }
+
+        // 6. Header control buttons (Ordered left-to-right: Color [●], Minimize [-], Close [✕])
         int right = x + w;
         int yBtn = y + 2;
 
@@ -426,16 +593,11 @@ public class StickyNoteWidget extends AbstractWidget {
         // Centered bold 6x6 pixel cross (2px line weight) with 3px margins on all 4 sides
         int bx = closeBtnX + 3;
         int by = yBtn + 3;
-        // Row 0: ##..##
         graphics.fill(bx, by, bx + 2, by + 1, closeCol);
         graphics.fill(bx + 4, by, bx + 6, by + 1, closeCol);
-        // Row 1: .####.
         graphics.fill(bx + 1, by + 1, bx + 5, by + 2, closeCol);
-        // Rows 2 & 3: ..##..
         graphics.fill(bx + 2, by + 2, bx + 4, by + 4, closeCol);
-        // Row 4: .####.
         graphics.fill(bx + 1, by + 4, bx + 5, by + 5, closeCol);
-        // Row 5: ##..##
         graphics.fill(bx, by + 5, bx + 2, by + 6, closeCol);
         graphics.fill(bx + 4, by + 5, bx + 6, by + 6, closeCol);
 
@@ -453,6 +615,33 @@ public class StickyNoteWidget extends AbstractWidget {
             graphics.fill(rx - 9, ry - 3, rx - 7, ry - 1, handleCol);
             graphics.fill(rx - 6, ry - 6, rx - 4, ry - 4, handleCol);
             graphics.fill(rx - 3, ry - 9, rx - 1, ry - 7, handleCol);
+        }
+
+        // 8. Tooltips (rendered on top of everything)
+        if (!isDraggingHeader && !isResizing) {
+            for (TabBounds tb : tabBoundsList) {
+                if (tb.contains(mouseX, mouseY)) {
+                    NoteTab tab = note.getTabs().get(tb.index());
+                    List<Component> tooltipLines = new ArrayList<>();
+                    String firstLine = "";
+                    if (!tab.getText().isEmpty()) {
+                        firstLine = tab.getText().lines().findFirst().orElse("");
+                        if (firstLine.length() > 24) {
+                            firstLine = firstLine.substring(0, 24) + "...";
+                        }
+                    }
+                    String tabHeader = "Tab " + tab.getTitle() + (firstLine.isEmpty() ? "" : ": " + firstLine);
+                    tooltipLines.add(Component.literal(tabHeader));
+                    if (note.getTabs().size() > 1) {
+                        tooltipLines.add(Component.literal("Right-click to close").withColor(0x888888));
+                    }
+                    graphics.setComponentTooltipForNextFrame(font, tooltipLines, mouseX, mouseY);
+                    break;
+                }
+            }
+            if (isOverAddTab(mouseX, mouseY)) {
+                graphics.setTooltipForNextFrame(font, Component.literal("Add tab (stack note)"), mouseX, mouseY);
+            }
         }
     }
 
